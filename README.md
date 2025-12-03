@@ -11,6 +11,7 @@ The script currently supports:
 *   **Automated Iteration:** Loops the generation process until the target word count is met.
 *   **Context Management:** Automatically manages the prompt context, keeping the original instruction and the most recent story history within the token limits.
 *   **Target Word Count:** Detects a target word count from the prompt file (e.g., "no less than 2000 words") or uses a configurable default.
+*   **Reference Story Analysis:** Optionally reads an existing story to extract its plot and storyline, using it as a basis for the new story generation.
 *   **Mock Mode:** Allows testing the logic without making actual API calls.
 
 ## Prerequisites
@@ -38,6 +39,7 @@ The script is configured via the `config.ini` file.
 *   `MAX_CONTEXT_LENGTH`: Maximum tokens/characters allowed in the context window.
 *   `MAX_GEN_LENGTH`: Maximum tokens/characters to generate per request.
 *   `GEMINI_API_KEY`: Your Google Gemini API key (can also be set via environment variable).
+*   `reference_story`: (Optional) Path to a text file containing an existing story. If set, the script will analyze this story's plot and use it to guide the generation of the new story.
 
 ### Generation Settings
 
@@ -50,7 +52,10 @@ The script is configured via the `config.ini` file.
     Edit `prompt.txt` or create a new text file with your story prompt. You can specify a target length within the text, for example:
     > "Generate a story containing no less than 1500 words about..."
 
-2.  **Run the script:**
+2.  **(Optional) Prepare a reference story:**
+    If you want to base the new story on an existing plot, create a text file (e.g., `reference.txt`) and set the `reference_story` path in `config.ini`.
+
+3.  **Run the script:**
 
     ```bash
     python StoryGenerator.py
@@ -98,6 +103,7 @@ GEMINI_API_KEY = YOUR_ACTUAL_API_KEY
 DEFAULT_TARGET_WORDS = 1000
 MAX_CONTEXT_LENGTH = 8192
 MAX_GEN_LENGTH = 1024
+# reference_story = my_fav_story.txt
 
 [Generation]
 temperature = 0.7

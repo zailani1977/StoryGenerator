@@ -23,7 +23,8 @@ try:
     MAX_CONTEXT_LENGTH = int(config['General']['MAX_CONTEXT_LENGTH'])
     MAX_GEN_LENGTH = int(config['General']['MAX_GEN_LENGTH'])
     GEMINI_API_KEY = config['General'].get('GEMINI_API_KEY', '')
-    
+    REFERENCE_STORY_PATH = config['General'].get('reference_story', '')
+
     TEMPERATURE = float(config['Generation']['temperature'])
     TOP_P = float(config['Generation']['top_p'])
 except (KeyError, ValueError) as e:
@@ -65,6 +66,29 @@ def generate_chunk(prompt, mock=False):
     else:
         print(f"Error: Unknown API_TYPE '{API_TYPE}'")
         return None
+
+def analyze_story(story_text):
+    """
+    Analyzes the provided story text to extract storyline, plot, characters, and setting.
+    """
+    analysis_prompt = (
+        "Analyze the following story and provide a concise summary of the storyline, "
+        "plot, key characters, and setting. Format it clearly.\n\n"
+        f"Story Text:\n{story_text}"
+    )
+
+    # We use generate_chunk logic but with a specific prompt.
+    # The 'mock' argument isn't available here directly, but we can assume false or pass it if needed.
+    # For simplicity, we just call the API function directly based on type.
+
+    print("Analyzing reference story...")
+
+    if API_TYPE == 'kobold':
+        return generate_chunk_kobold(analysis_prompt)
+    elif API_TYPE == 'gemini':
+        return generate_chunk_gemini(analysis_prompt)
+    else:
+        return "Analysis failed: Unknown API type."
 
 def generate_chunk_kobold(prompt):
     payload = {
@@ -176,7 +200,37 @@ def main():
     target_words = extract_target_length(original_prompt)
     
     print(f"Goal: Generate a story of at least {target_words} words.")
-    
+
+    # Check for reference story
+    reference_context = ""
+    if REFERENCE_STORY_PATH and os.path.exists(REFERENCE_STORY_PATH):
+        print(f"Reading reference story from: {REFERENCE_STORY_PATH}")
+        try:
+            with open(REFERENCE_STORY_PATH, 'r', encoding='utf-8') as f:
+                ref_text = f.read()
+
+            # Limit ref_text to avoid token overflow during analysis if it's huge
+            # Simple truncation for now.
+            # Assuming max context length applies to analysis prompt too.
+            max_analysis_input = int(MAX_CONTEXT_LENGTH * 3)
+            if len(ref_text) > max_analysis_input:
+                print("Warning: Reference story is too long, truncating for analysis.")
+                ref_text = ref_text[:max_analysis_input]
+
+            if not args.mock:
+                analysis = analyze_story(ref_text)
+            else:
+                analysis = "[Mock Analysis: The story is about X doing Y.]"
+
+            if analysis:
+                print("Reference story analyzed successfully.")
+                reference_context = f"\n\nBased on the following storyline/plot from a reference story:\n{analysis}\n"
+            else:
+                print("Warning: Failed to analyze reference story.")
+
+        except Exception as e:
+            print(f"Error processing reference story: {e}")
+
     story = ""
     chunk_count = 0
     
@@ -187,12 +241,21 @@ def main():
         if not story:
             # First iteration: Just the instruction, maybe slightly formatted
             current_input = original_prompt
+
+            # Inject reference context
+            if reference_context:
+                current_input += reference_context
+
             # Optional: Add a starter to guide the model into story mode
             if not current_input.endswith("\n"):
                 current_input += "\n"
             current_input += "\nStory:\n"
         else:
-            current_input = construct_prompt(original_prompt, story)
+            # We might want to keep the reference context in subsequent prompts too?
+            # construct_prompt currently takes original_instruction.
+            # We can append reference_context to original_instruction so it stays in context.
+            effective_instruction = original_prompt + reference_context if reference_context else original_prompt
+            current_input = construct_prompt(effective_instruction, story)
         
         # Generate
         generated_text = generate_chunk(current_input, mock=args.mock)

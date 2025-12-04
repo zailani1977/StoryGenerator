@@ -67,28 +67,85 @@ def generate_chunk(prompt, mock=False):
         print(f"Error: Unknown API_TYPE '{API_TYPE}'")
         return None
 
-def analyze_story(story_text):
+def split_text_into_chunks(text, chunk_size):
+    return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+
+def analyze_story(story_text, mock=False):
     """
     Analyzes the provided story text to extract storyline, plot, characters, and setting.
+    Handles long texts by chunking.
     """
-    analysis_prompt = (
-        "Analyze the following story and provide a concise summary of the storyline, "
-        "plot, key characters, and setting. Format it clearly.\n\n"
-        f"Story Text:\n{story_text}"
-    )
 
-    # We use generate_chunk logic but with a specific prompt.
-    # The 'mock' argument isn't available here directly, but we can assume false or pass it if needed.
-    # For simplicity, we just call the API function directly based on type.
+    # Calculate a safe chunk size.
+    # MAX_CONTEXT_LENGTH is in tokens (approx), usually 2048.
+    # We want to leave room for the prompt and the generated summary.
+    # 2048 tokens * 3 chars/token = 6144 chars.
+    # Let's target ~4000 chars per chunk to be safe and allow for overhead.
+    CHUNK_SIZE = 4000
 
-    print("Analyzing reference story...")
+    if len(story_text) <= CHUNK_SIZE:
+        # Short enough to analyze in one go
+        analysis_prompt = (
+            "Analyze the following story and provide a concise summary of the storyline, "
+            "plot, key characters, and setting. Format it clearly.\n\n"
+            f"Story Text:\n{story_text}"
+        )
+        print("Analyzing reference story...")
+        if mock:
+             return "[Mock Analysis: The story is about characters in a setting doing things.]"
 
-    if API_TYPE == 'kobold':
-        return generate_chunk_kobold(analysis_prompt)
-    elif API_TYPE == 'gemini':
-        return generate_chunk_gemini(analysis_prompt)
+        if API_TYPE == 'kobold':
+            return generate_chunk_kobold(analysis_prompt)
+        elif API_TYPE == 'gemini':
+            return generate_chunk_gemini(analysis_prompt)
+        else:
+             return "Analysis failed: Unknown API type."
     else:
-        return "Analysis failed: Unknown API type."
+        # Long story, needs chunking
+        print("Reference story is long. Analyzing in chunks...")
+        chunks = split_text_into_chunks(story_text, CHUNK_SIZE)
+        summaries = []
+
+        for i, chunk in enumerate(chunks):
+            print(f"Analyzing chunk {i+1}/{len(chunks)}...")
+            prompt = (
+                "Summarize the following part of the story concisely, focusing on plot progression and character actions:\n\n"
+                f"{chunk}"
+            )
+
+            if mock:
+                summary = f"[Mock Summary of chunk {i+1}]"
+            elif API_TYPE == 'kobold':
+                summary = generate_chunk_kobold(prompt)
+            elif API_TYPE == 'gemini':
+                summary = generate_chunk_gemini(prompt)
+            else:
+                summary = None
+
+            if summary:
+                summaries.append(summary)
+            else:
+                print(f"Warning: Failed to summarize chunk {i+1}")
+
+        combined_summary = "\n".join(summaries)
+
+        # Final analysis of the combined summaries
+        print("Performing final analysis on combined summaries...")
+        final_prompt = (
+            "Analyze the following story summaries and provide a concise unified summary of the full storyline, "
+            "plot, key characters, and setting. Format it clearly.\n\n"
+            f"Story Parts:\n{combined_summary}"
+        )
+
+        if mock:
+            return "[Mock Final Analysis: The full story involves characters A and B going through events X, Y, and Z.]"
+
+        if API_TYPE == 'kobold':
+            return generate_chunk_kobold(final_prompt)
+        elif API_TYPE == 'gemini':
+            return generate_chunk_gemini(final_prompt)
+        else:
+             return "Analysis failed: Unknown API type."
 
 def generate_chunk_kobold(prompt):
     payload = {
@@ -209,18 +266,8 @@ def main():
             with open(REFERENCE_STORY_PATH, 'r', encoding='utf-8') as f:
                 ref_text = f.read()
 
-            # Limit ref_text to avoid token overflow during analysis if it's huge
-            # Simple truncation for now.
-            # Assuming max context length applies to analysis prompt too.
-            max_analysis_input = int(MAX_CONTEXT_LENGTH * 3)
-            if len(ref_text) > max_analysis_input:
-                print("Warning: Reference story is too long, truncating for analysis.")
-                ref_text = ref_text[:max_analysis_input]
-
-            if not args.mock:
-                analysis = analyze_story(ref_text)
-            else:
-                analysis = "[Mock Analysis: The story is about X doing Y.]"
+            # Analyze reference story (now handles long texts)
+            analysis = analyze_story(ref_text, mock=args.mock)
 
             if analysis:
                 print("Reference story analyzed successfully.")

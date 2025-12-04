@@ -86,8 +86,8 @@ def analyze_story(story_text, mock=False):
     if len(story_text) <= CHUNK_SIZE:
         # Short enough to analyze in one go
         analysis_prompt = (
-            "Analyze the following story and provide a concise summary of the storyline, "
-            "plot, key characters, and setting. Format it clearly.\n\n"
+            "Analyze the following story and provide a detailed plot outline, including key beats, "
+            "character arcs, and setting details. Ensure the storyline is clear and easy to follow.\n\n"
             f"Story Text:\n{story_text}"
         )
         print("Analyzing reference story...")
@@ -109,7 +109,8 @@ def analyze_story(story_text, mock=False):
         for i, chunk in enumerate(chunks):
             print(f"Analyzing chunk {i+1}/{len(chunks)}...")
             prompt = (
-                "Summarize the following part of the story concisely, focusing on plot progression and character actions:\n\n"
+                "Create a detailed outline of the events in the following part of the story, focusing on plot progression, "
+                "character actions, and key scenes:\n\n"
                 f"{chunk}"
             )
 
@@ -132,8 +133,8 @@ def analyze_story(story_text, mock=False):
         # Final analysis of the combined summaries
         print("Performing final analysis on combined summaries...")
         final_prompt = (
-            "Analyze the following story summaries and provide a concise unified summary of the full storyline, "
-            "plot, key characters, and setting. Format it clearly.\n\n"
+            "Analyze the following story outlines and provide a comprehensive and unified plot outline of the full story. "
+            "Include key plot points, character development, and setting details in chronological order.\n\n"
             f"Story Parts:\n{combined_summary}"
         )
 
@@ -217,31 +218,75 @@ def generate_chunk_gemini(prompt):
              print(f"Response: {e.response.text}")
         return None
 
-def construct_prompt(original_instruction, story_so_far):
-    # Strategy: 
-    # Keep the instruction at the top to maintain the premise.
-    # Append the last N characters of the story to fit within context.
-    # We need to leave room for the instruction and the new generation.
+def construct_prompt(original_instruction, story_so_far, reference_context=None):
+    # Strategy:
+    # 1. Main Instruction (Prompt)
+    # 2. Reference Plot Outline (if exists)
+    # 3. Guidance (if reference exists)
+    # 4. Story Context (Story so far)
     
-    instruction_part = f"Instructions: {original_instruction}\n\nStory so far:\n"
+    # Base instruction block
+    base_instruction = f"Instructions: {original_instruction}\n"
     
+    if reference_context:
+        base_instruction += f"\nReference Plot Outline:\n{reference_context}\n"
+        base_instruction += "\nGuidance: Write the next part of the story, ensuring it follows the Reference Plot Outline above.\n"
+
+    base_instruction += "\nStory so far:\n"
+
+    # Calculate available space
     # We need to ensure that (Prompt + Generation) <= MAX_CONTEXT_LENGTH
-    # So Prompt <= MAX_CONTEXT_LENGTH - MAX_GEN_LENGTH
     max_prompt_tokens = MAX_CONTEXT_LENGTH - MAX_GEN_LENGTH
     safe_char_limit = int(max_prompt_tokens * 3) # Approx 3 chars per token
     
-    available_chars_for_story = safe_char_limit - len(instruction_part)
+    # Space occupied by static parts
+    static_len = len(base_instruction)
+    available_chars_for_story = safe_char_limit - static_len
     
-    if available_chars_for_story < 100:
-        # Instruction is too long, just send the tail of the story
-        return story_so_far[-safe_char_limit:]
+    if available_chars_for_story < 50:
+        # Static parts are too long.
+        # Priority: Keep instructions and reference, sacrifice story context?
+        # If static_len is effectively consuming the whole context, we must trim the reference.
+        print("Warning: Context limit reached by instructions.")
+
+        # Try to keep at least some story context (e.g. 100 chars)
+        min_story_context = 100
+        available_for_static = safe_char_limit - min_story_context
+
+        if available_for_static < len(original_instruction) + 50:
+             # Even original instruction is too long? Just fail gracefully to simple prompt.
+             print("Critical: Instruction too long.")
+             simple_instruction = f"Instructions: {original_instruction}\n\nStory so far:\n"
+
+             if len(simple_instruction) > safe_char_limit:
+                 # Instruction itself exceeds limit. Fallback to just story tail.
+                 return story_so_far[-safe_char_limit:]
+
+             available_simple = safe_char_limit - len(simple_instruction)
+             return simple_instruction + story_so_far[-available_simple:]
+
+        # Truncate reference to fit
+        # We know static_len > available_for_static
+        # Rebuild base_instruction with truncated reference
+        excess = static_len - available_for_static
+        truncated_reference_len = len(reference_context) - excess - 20 # -20 for safety
+
+        if truncated_reference_len > 0:
+             truncated_ref = reference_context[:truncated_reference_len] + "... [Truncated]"
+             base_instruction = f"Instructions: {original_instruction}\n\nReference Plot Outline:\n{truncated_ref}\n\nGuidance: Write the next part of the story, ensuring it follows the Reference Plot Outline above.\n\nStory so far:\n"
+             available_chars_for_story = min_story_context
+        else:
+             # Reference too long to keep even a bit? Drop it.
+             base_instruction = f"Instructions: {original_instruction}\n\nStory so far:\n"
+             available_chars_for_story = safe_char_limit - len(base_instruction)
     
     if len(story_so_far) > available_chars_for_story:
         context_story = story_so_far[-available_chars_for_story:]
     else:
         context_story = story_so_far
-        
-    return instruction_part + context_story
+
+    full_prompt = base_instruction + context_story
+    return full_prompt
 
 def main():
     parser = argparse.ArgumentParser(description="Generate a story using KoboldCPP or Gemini.")
@@ -271,7 +316,7 @@ def main():
 
             if analysis:
                 print("Reference story analyzed successfully.")
-                reference_context = f"\n\nBased on the following storyline/plot from a reference story:\n{analysis}\n"
+                reference_context = analysis
             else:
                 print("Warning: Failed to analyze reference story.")
 
@@ -286,23 +331,14 @@ def main():
         
         # Construct prompt
         if not story:
-            # First iteration: Just the instruction, maybe slightly formatted
-            current_input = original_prompt
-
-            # Inject reference context
+            # First iteration
+            current_input = f"Instructions: {original_prompt}\n"
             if reference_context:
-                current_input += reference_context
+                current_input += f"\nReference Plot Outline:\n{reference_context}\n"
 
-            # Optional: Add a starter to guide the model into story mode
-            if not current_input.endswith("\n"):
-                current_input += "\n"
             current_input += "\nStory:\n"
         else:
-            # We might want to keep the reference context in subsequent prompts too?
-            # construct_prompt currently takes original_instruction.
-            # We can append reference_context to original_instruction so it stays in context.
-            effective_instruction = original_prompt + reference_context if reference_context else original_prompt
-            current_input = construct_prompt(effective_instruction, story)
+            current_input = construct_prompt(original_prompt, story, reference_context)
         
         # Generate
         generated_text = generate_chunk(current_input, mock=args.mock)

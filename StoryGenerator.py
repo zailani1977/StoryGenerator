@@ -46,12 +46,12 @@ def load_prompt(filepath):
 def get_word_count(text):
     return len(text.split())
 
-def extract_target_length(prompt_text):
+def extract_target_length(prompt_text, default_val=DEFAULT_TARGET_WORDS):
     # Look for "no less than X words"
     match = re.search(r"no less than (\d+) words", prompt_text, re.IGNORECASE)
     if match:
         return int(match.group(1))
-    return DEFAULT_TARGET_WORDS
+    return default_val
 
 def generate_chunk(prompt, mock=False):
     if mock:
@@ -197,17 +197,18 @@ def main():
     print(f"API Provider: {API_TYPE}")
     
     original_prompt = load_prompt(args.prompt_file)
-    target_words = extract_target_length(original_prompt)
     
-    print(f"Goal: Generate a story of at least {target_words} words.")
-
     # Check for reference story
     reference_context = ""
+    reference_word_count = 0
     if REFERENCE_STORY_PATH and os.path.exists(REFERENCE_STORY_PATH):
         print(f"Reading reference story from: {REFERENCE_STORY_PATH}")
         try:
             with open(REFERENCE_STORY_PATH, 'r', encoding='utf-8') as f:
                 ref_text = f.read()
+
+            reference_word_count = get_word_count(ref_text)
+            print(f"Reference story word count: {reference_word_count}")
 
             # Limit ref_text to avoid token overflow during analysis if it's huge
             # Simple truncation for now.
@@ -230,6 +231,13 @@ def main():
 
         except Exception as e:
             print(f"Error processing reference story: {e}")
+
+    # Determine target words
+    # If reference story exists, its length is used as the default target, replacing DEFAULT_TARGET_WORDS
+    default_target = reference_word_count if reference_word_count > 0 else DEFAULT_TARGET_WORDS
+    target_words = extract_target_length(original_prompt, default_target)
+
+    print(f"Goal: Generate a story of at least {target_words} words.")
 
     story = ""
     chunk_count = 0

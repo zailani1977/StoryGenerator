@@ -5,6 +5,7 @@ import argparse
 import time
 import configparser
 import os
+import json
 
 # Load configuration
 config = configparser.ConfigParser()
@@ -24,6 +25,7 @@ try:
     MAX_GEN_LENGTH = int(config['General']['MAX_GEN_LENGTH'])
     GEMINI_API_KEY = config['General'].get('GEMINI_API_KEY', '')
     REFERENCE_STORY_PATH = config['General'].get('reference_story', '')
+    VERBOSE = config['General'].get('verbose', 'no').lower() == 'yes'
 
     TEMPERATURE = float(config['Generation']['temperature'])
     TOP_P = float(config['Generation']['top_p'])
@@ -34,6 +36,27 @@ except (KeyError, ValueError) as e:
 # Override with environment variable if present
 if 'GEMINI_API_KEY' in os.environ:
     GEMINI_API_KEY = os.environ['GEMINI_API_KEY']
+
+# Initialize verbose log
+if VERBOSE:
+    try:
+        with open("verbose.log", "w", encoding='utf-8') as f:
+            f.write("--- Verbose Log Started ---\n\n")
+    except IOError as e:
+        print(f"Error initializing verbose log: {e}")
+
+def log_verbose(title, data):
+    if VERBOSE:
+        try:
+            with open("verbose.log", "a", encoding='utf-8') as f:
+                f.write(f"--- {title} ---\n")
+                try:
+                    f.write(json.dumps(data, indent=2))
+                except (TypeError, ValueError):
+                    f.write(str(data))
+                f.write("\n\n")
+        except IOError as e:
+            print(f"Error writing to verbose log: {e}")
 
 def load_prompt(filepath):
     try:
@@ -156,11 +179,22 @@ def generate_chunk_kobold(prompt):
         "temperature": TEMPERATURE,
         "top_p": TOP_P,
     }
+
+    if VERBOSE:
+        log_verbose("Kobold Request Payload", payload)
     
     try:
         response = requests.post(API_URL, json=payload)
+
+        if VERBOSE:
+            try:
+                log_verbose("Kobold Response", response.json())
+            except:
+                log_verbose("Kobold Response (Raw)", response.text)
+
         response.raise_for_status()
         result = response.json()
+
         if 'results' in result and len(result['results']) > 0:
             return result['results'][0]['text']
         else:
@@ -194,9 +228,19 @@ def generate_chunk_gemini(prompt):
             "maxOutputTokens": MAX_GEN_LENGTH
         }
     }
+
+    if VERBOSE:
+        log_verbose("Gemini Request Payload", payload)
     
     try:
         response = requests.post(url, json=payload)
+
+        if VERBOSE:
+            try:
+                log_verbose("Gemini Response", response.json())
+            except:
+                log_verbose("Gemini Response (Raw)", response.text)
+
         response.raise_for_status()
         result = response.json()
         
